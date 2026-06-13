@@ -11,8 +11,10 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
 
+# ✅ FIXED — was broken before
 CORS(app, resources={r"/api/*": {"origins": [
-    CORS(app)
+    "https://phantombreaker.vercel.app",
+    "http://localhost:3000"
 ]}})
 
 limiter = Limiter(

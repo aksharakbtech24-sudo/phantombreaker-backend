@@ -28,7 +28,7 @@ Respond with ONLY this JSON structure, no extra text:
   "dangerous_sentences": ["exact sentence from email that is dangerous"],
   "manipulation_tactics": ["tactic name like Urgency, Fear, Impersonation, etc"],
   "explanation": "2-3 sentence explanation of why this is or isnt phishing",
-  "language_detected": "English or Hindi or Telugu or Other"
+  "language_detected": "detect the exact language name - could be English, Hindi, Telugu, Tamil, Kannada, Malayalam, Bengali, Marathi, Gujarati, Punjabi, Odia, Urdu, Assamese, Sanskrit, or any other Indian or world language like Spanish, French, Arabic, Chinese, Japanese, German, Russian, Portuguese, Korean, Italian, Turkish etc"
 }}"""
 
     try:
