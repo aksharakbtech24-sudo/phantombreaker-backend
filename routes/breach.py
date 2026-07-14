@@ -18,7 +18,7 @@ def check_breach():
 
     try:
         response = requests.get(
-            'https://leakcheck.io/api/v2/query/' + email,
+            'https://leakcheck.io/api/v2/query/' + email
             headers={'X-API-Key': leakcheck_key},
             timeout=10
         )
