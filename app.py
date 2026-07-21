@@ -1,4 +1,3 @@
-
 import os
 from flask import Flask
 from flask_cors import CORS
@@ -36,11 +35,13 @@ from routes.phishing import phishing_bp
 from routes.deepfake import deepfake_bp
 from routes.breach import breach_bp
 from routes.translate import translate_bp
+from routes.tts import tts_bp
  
 app.register_blueprint(phishing_bp, url_prefix='/api')
 app.register_blueprint(deepfake_bp, url_prefix='/api')
 app.register_blueprint(breach_bp, url_prefix='/api')
 app.register_blueprint(translate_bp, url_prefix='/api')
+app.register_blueprint(tts_bp, url_prefix='/api')
  
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
