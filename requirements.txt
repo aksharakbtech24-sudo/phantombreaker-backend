@@ -7,3 +7,4 @@ Pillow==12.2.0
 fpdf2==2.8.7
 groq==1.4.0
 gunicorn==26.0.0
+gtts==2.5.4
