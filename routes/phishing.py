@@ -1,4 +1,3 @@
-
 import os
 import json
 import requests
@@ -12,17 +11,21 @@ client = Groq(api_key=os.getenv('GROQ_API_KEY'))
 def analyze_phishing():
     data = request.get_json()
     email_text = data.get('email_text', '')
+    response_language = data.get('response_language')  # user's selected site language, optional
  
     if not email_text or len(email_text) < 10:
         return jsonify({"error": "Email text too short"}), 400
  
-    prompt = f"""You are an expert cybersecurity analyst specializing in phishing detection.
-Analyze this email and respond ONLY in valid JSON format.
- 
-Email to analyze:
-{email_text}
- 
-IMPORTANT LANGUAGE RULE:
+    if response_language and response_language.strip().lower() != 'english':
+        language_rule = f"""IMPORTANT LANGUAGE RULE:
+The user has selected "{response_language}" as their site language.
+Write "explanation", "dangerous_sentences", and "manipulation_tactics"
+IN {response_language.upper()} — using that language's native script —
+REGARDLESS of what language the email itself is written in. Only
+"language_detected" (which should still report the email's actual
+original language) and the JSON keys stay in English."""
+    else:
+        language_rule = """IMPORTANT LANGUAGE RULE:
 First detect the language the email is written in (English, Hindi, Telugu, Tamil,
 Kannada, Malayalam, Bengali, Marathi, Gujarati, Punjabi, Odia, Urdu, Assamese,
 Sanskrit, or any other Indian or world language such as Spanish, French, Arabic,
@@ -30,16 +33,24 @@ Chinese, Japanese, German, Russian, Portuguese, Korean, Italian, Turkish, etc).
 Then write "explanation", "dangerous_sentences", and "manipulation_tactics"
 IN THAT SAME DETECTED LANGUAGE — not in English — using that language's native
 script. Only "language_detected" and the JSON keys themselves stay in English.
-If the email is in English, respond in English as normal.
+If the email is in English, respond in English as normal."""
+ 
+    prompt = f"""You are an expert cybersecurity analyst specializing in phishing detection.
+Analyze this email and respond ONLY in valid JSON format.
+ 
+Email to analyze:
+{email_text}
+ 
+{language_rule}
  
 Respond with ONLY this JSON structure, no extra text:
 {{
   "is_phishing": true or false,
   "threat_score": number between 0 and 100,
-  "dangerous_sentences": ["exact sentence from email that is dangerous, written in the detected language"],
-  "manipulation_tactics": ["tactic name, written in the detected language, e.g. Urgency/तात्कालिकता/అత్యవసరత"],
-  "explanation": "2-3 sentence explanation written in the detected language, of why this is or isnt phishing",
-  "language_detected": "the exact language name in English, e.g. Telugu"
+  "dangerous_sentences": ["exact sentence from email that is dangerous, written per the language rule above"],
+  "manipulation_tactics": ["tactic name, written per the language rule above, e.g. Urgency/तात्कालिकता/అత్యవసరత"],
+  "explanation": "2-3 sentence explanation, written per the language rule above, of why this is or isnt phishing",
+  "language_detected": "the exact language name in English that the ORIGINAL email was written in, e.g. Telugu"
 }}"""
  
     try:
