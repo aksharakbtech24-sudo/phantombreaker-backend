@@ -1,9 +1,49 @@
 import os
+import json
 import requests
 from flask import Blueprint, request, jsonify
-
+from groq import Groq
+ 
 deepfake_bp = Blueprint('deepfake', __name__)
-
+client = Groq(api_key=os.getenv('GROQ_API_KEY'))
+ 
+ 
+def translate_strings(strings, target_language):
+    """Translate a list of strings into target_language using Groq.
+    Returns the original list unchanged if target_language is English/empty,
+    or if translation fails for any reason (never breaks the main response)."""
+    if not target_language or target_language.strip().lower() == 'english':
+        return strings
+    if not strings:
+        return strings
+ 
+    numbered = "\n".join([f"{i}: {s}" for i, s in enumerate(strings)])
+    prompt = f"""Translate each numbered line into {target_language}, using that
+language's native script. Keep numbers/percentages as-is. Respond with ONLY
+a JSON array of translated strings, same order and count, no extra text:
+ 
+{numbered}"""
+ 
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=800
+        )
+        raw = response.choices[0].message.content.strip()
+        if '```json' in raw:
+            raw = raw.split('```json')[1].split('```')[0].strip()
+        elif '```' in raw:
+            raw = raw.split('```')[1].split('```')[0].strip()
+        translated = json.loads(raw)
+        if isinstance(translated, list) and len(translated) == len(strings):
+            return translated
+    except Exception:
+        pass
+    return strings  # fallback: original English, never break the response
+ 
+ 
 @deepfake_bp.route('/detect-deepfake', methods=['POST'])
 def detect_deepfake():
     if 'image' not in request.files:
@@ -12,6 +52,9 @@ def detect_deepfake():
     image_bytes = image_file.read()
     if len(image_bytes) > 10 * 1024 * 1024:
         return jsonify({"error": "Image too large. Max 10MB"}), 400
+ 
+    response_language = request.form.get('response_language')  # user's selected site language
+ 
     try:
         hf_response = requests.post(
             'https://router.huggingface.co/hf-inference/models/umm-maybe/AI-image-detector',
@@ -57,6 +100,12 @@ def detect_deepfake():
                "The image appears to be authentic with natural pixel patterns. ")
             + ("Treat this image with caution." if is_deepfake else "No significant manipulation detected.")
         )
+ 
+        # Translate explanation + indicators together into the selected language, if not English
+        translated = translate_strings([explanation] + indicators, response_language)
+        explanation = translated[0]
+        indicators = translated[1:]
+ 
         return jsonify({
             "is_deepfake": is_deepfake,
             "fake_score": fake_score,
@@ -66,3 +115,4 @@ def detect_deepfake():
         })
     except Exception as e:
         return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
+ 
