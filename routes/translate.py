@@ -71,4 +71,8 @@ order and count as the input lines, no extra text, no explanation:
         return jsonify({"translations": translations})
  
     except Exception as e:
+        import traceback
+        print("=== TRANSLATE ERROR ===")
+        print(traceback.format_exc())
+        print("========================")
         return jsonify({"error": f"Translation failed: {str(e)}"}), 500
