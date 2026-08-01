@@ -3,19 +3,52 @@ import json
 import requests
 from flask import Blueprint, request, jsonify
 from groq import Groq
- 
+
 phishing_bp = Blueprint('phishing', __name__)
 client = Groq(api_key=os.getenv('GROQ_API_KEY'))
- 
+
+# Fallback models in priority order
+GROQ_MODELS = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it"
+]
+
+def query_groq_with_fallback(prompt, max_tokens=1200):
+    """Query Groq API trying primary model first, then fallbacks on 429 rate limits or errors."""
+    last_error = None
+    for model_name in GROQ_MODELS:
+        try:
+            print(f"Trying Groq model: {model_name}")
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=max_tokens
+            )
+            raw = response.choices[0].message.content.strip()
+            if '```json' in raw:
+                raw = raw.split('```json')[1].split('```')[0].strip()
+            elif '```' in raw:
+                raw = raw.split('```')[1].split('```')[0].strip()
+            return json.loads(raw)
+        except Exception as e:
+            last_error = str(e)
+            print(f"Model {model_name} failed: {last_error}")
+            continue
+
+    raise Exception(last_error or "All Groq models exhausted")
+
 @phishing_bp.route('/analyze-phishing', methods=['POST'])
 def analyze_phishing():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     email_text = data.get('email_text', '')
     response_language = data.get('response_language')  # user's selected site language, optional
- 
-    if not email_text or len(email_text) < 10:
-        return jsonify({"error": "Email text too short"}), 400
- 
+
+    if not email_text or len(email_text.strip()) < 10:
+        return jsonify({"error": "Email text too short. Minimum 10 characters required."}), 400
+
     if response_language and response_language.strip().lower() != 'english':
         language_rule = f"""IMPORTANT LANGUAGE RULE:
 The user has selected "{response_language}" as their site language.
@@ -34,15 +67,15 @@ Then write "explanation", "dangerous_sentences", and "manipulation_tactics"
 IN THAT SAME DETECTED LANGUAGE — not in English — using that language's native
 script. Only "language_detected" and the JSON keys themselves stay in English.
 If the email is in English, respond in English as normal."""
- 
+
     prompt = f"""You are an expert cybersecurity analyst specializing in phishing detection.
 Analyze this email and respond ONLY in valid JSON format.
- 
+
 Email to analyze:
 {email_text}
- 
+
 {language_rule}
- 
+
 Respond with ONLY this JSON structure, no extra text:
 {{
   "is_phishing": true or false,
@@ -52,44 +85,38 @@ Respond with ONLY this JSON structure, no extra text:
   "explanation": "2-3 sentence explanation, written per the language rule above, of why this is or isnt phishing",
   "language_detected": "the exact language name in English that the ORIGINAL email was written in, e.g. Telugu"
 }}"""
- 
+
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=1200
-        )
-        raw = response.choices[0].message.content.strip()
-        # Clean up response
-        if '```json' in raw:
-            raw = raw.split('```json')[1].split('```')[0].strip()
-        elif '```' in raw:
-            raw = raw.split('```')[1].split('```')[0].strip()
-        result = json.loads(raw)
+        result = query_groq_with_fallback(prompt)
     except Exception as e:
-        return jsonify({"error": f"AI analysis failed: {str(e)}"}), 500
- 
+        err_msg = str(e)
+        if '429' in err_msg or 'rate_limit' in err_msg.lower():
+            user_friendly_err = "API Rate limit reached on Groq free tier. Please wait a minute and try again."
+        else:
+            user_friendly_err = f"AI analysis temporarily unavailable: {err_msg}"
+        return jsonify({"error": user_friendly_err}), 500
+
     # Sapling AI detection
     ai_score = 0
-    try:
-        sapling_response = requests.post(
-            'https://api.sapling.ai/api/v1/aidetect',
-            json={
-                'key': os.getenv('SAPLING_API_KEY'),
-                'text': email_text
-            },
-            timeout=10
-        )
-        if sapling_response.status_code == 200:
-            sapling_data = sapling_response.json()
-            ai_score = round(sapling_data.get('score', 0) * 100)
-    except:
-        ai_score = 0
- 
+    sapling_key = os.getenv('SAPLING_API_KEY')
+    if sapling_key:
+        try:
+            sapling_response = requests.post(
+                'https://api.sapling.ai/api/v1/aidetect',
+                json={
+                    'key': sapling_key,
+                    'text': email_text
+                },
+                timeout=8
+            )
+            if sapling_response.status_code == 200:
+                sapling_data = sapling_response.json()
+                ai_score = round(sapling_data.get('score', 0) * 100)
+        except Exception:
+            ai_score = 0
+
     result['ai_written_score'] = ai_score
-    result['combined_threat_score'] = min(100, int(
-        result.get('threat_score', 0) * 0.7 + ai_score * 0.3
-    ))
- 
-    return jsonify(result)
+    raw_threat = result.get('threat_score', 0)
+    result['combined_threat_score'] = min(100, int(raw_threat * 0.7 + ai_score * 0.3))
+
+    return jsonify(result)
