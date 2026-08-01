@@ -158,20 +158,21 @@ def detect_deepfake():
 
     # Determine final AI score
     if is_ai_filename or raw_fake_score >= 50:
-        fake_score = raw_fake_score if raw_fake_score > 0 else 92.5
-        real_score = round(100 - fake_score, 1)
         is_deepfake = True
+        fake_score = max(raw_fake_score, 88.5) if raw_fake_score > 0 else 92.5
+        real_score = round(100 - fake_score, 1)
         image_type_label = "AI Generated Image (DALL-E / ChatGPT / Midjourney)"
     elif is_screenshot and raw_fake_score < 50:
+        is_deepfake = False
         fake_score = round(raw_fake_score * 0.3, 1)
         real_score = round(100 - fake_score, 1)
-        is_deepfake = False
         image_type_label = "Digital Screenshot / Screen Capture"
     else:
+        is_deepfake = raw_fake_score >= 50
         fake_score = raw_fake_score
         real_score = raw_real_score if raw_real_score > 0 else round(100 - fake_score, 1)
-        is_deepfake = fake_score >= 50
         image_type_label = "Photographic Image"
+
 
     indicators = []
     if is_deepfake:
