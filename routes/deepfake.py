@@ -3,11 +3,17 @@ import io
 import json
 import requests
 from flask import Blueprint, request, jsonify
+from dotenv import load_dotenv
 from groq import Groq
 from PIL import Image, ImageChops, ImageStat
 
+
+load_dotenv()
+
 deepfake_bp = Blueprint('deepfake', __name__)
-client = Groq(api_key=os.getenv('GROQ_API_KEY'))
+groq_key = os.getenv('GROQ_API_KEY', '').strip()
+client = Groq(api_key=groq_key) if groq_key else None
+
 
 GROQ_MODELS = [
     "llama-3.3-70b-versatile",
@@ -89,8 +95,9 @@ def translate_strings(strings, target_language):
     """Translate a list of strings into target_language using Groq with model fallback."""
     if not target_language or target_language.strip().lower() == 'english':
         return strings
-    if not strings:
+    if not strings or not client:
         return strings
+
 
     numbered = "\n".join([f"{i}: {s}" for i, s in enumerate(strings)])
     prompt = f"""Translate each numbered line into {target_language}, using that
