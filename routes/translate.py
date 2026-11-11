@@ -1,20 +1,25 @@
 import os
+import re
 import json
 from flask import Blueprint, request, jsonify
+from dotenv import load_dotenv
 from groq import Groq
 
+load_dotenv()
+
 translate_bp = Blueprint('translate', __name__)
-client = Groq(api_key=os.getenv('GROQ_API_KEY'))
+groq_key = os.getenv('GROQ_API_KEY', '').strip()
+client = Groq(api_key=groq_key) if groq_key else None
 
 GROQ_MODELS = [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "mixtral-8x7b-32768",
-    "gemma2-9b-it"
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b"
 ]
 
-def query_groq_translate(prompt, max_tokens=2000):
-    last_error = None
+def query_groq_translate(prompt, max_tokens=1500):
+    if not client:
+        return None
     for model_name in GROQ_MODELS:
         try:
             response = client.chat.completions.create(
@@ -24,34 +29,22 @@ def query_groq_translate(prompt, max_tokens=2000):
                 max_tokens=max_tokens
             )
             raw = response.choices[0].message.content.strip()
-            if '```json' in raw:
-                raw = raw.split('```json')[1].split('```')[0].strip()
-            elif '```' in raw:
-                raw = raw.split('```')[1].split('```')[0].strip()
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                return parsed
+            # Strip think tags if present
+            raw = re.sub(r'<think>[\s\S]*?</think>', '', raw).strip()
+            start = raw.find('[')
+            end = raw.rfind(']')
+            if start != -1 and end != -1:
+                parsed = json.loads(raw[start:end+1])
+                if isinstance(parsed, list):
+                    return parsed
         except Exception as e:
-            last_error = str(e)
+            print(f"Model {model_name} error:", e)
             continue
-    raise Exception(last_error or "All translation models failed")
+    return None
 
 
 @translate_bp.route('/translate', methods=['POST'])
 def translate_batch():
-    """
-    Request body:
-    {
-      "texts": ["Home", "Phishing Analyzer", "Detect phishing emails..."],
-      "target_language": "Tamil"
-    }
-    Response:
-    {
-      "translations": ["முகப்பு", "ஃபிஷிங் ஆய்வாளர்", "..."]
-    }
-    Translates in one batch call to keep it fast and cheap, and preserves
-    array order so the frontend can map translations back to the same keys.
-    """
     data = request.get_json(silent=True) or {}
     texts = data.get('texts')
     target_language = data.get('target_language')
@@ -61,33 +54,33 @@ def translate_batch():
     if not target_language:
         return jsonify({"error": "target_language is required"}), 400
 
-    # English passthrough — no need to call the model
     if target_language.strip().lower() == 'english':
         return jsonify({"translations": texts})
 
     numbered = "\n".join([f"{i}: {t}" for i, t in enumerate(texts)])
 
     prompt = f"""Translate each numbered line below into {target_language}.
-Keep the same tone (this is UI text for a cybersecurity app — keep it natural,
-concise, and appropriate for buttons/headings/labels where the line is short).
-Do NOT translate proper nouns/brand names like "PhantomBreaker", "LLaMA",
-"HuggingFace", "AI", "PDF".
-
-Lines to translate:
+Keep emojis, formatting, and technical terms (PhantomBreaker, LLaMA, AI, PDF) unchanged.
+Lines:
 {numbered}
 
-Respond with ONLY a JSON array of translated strings, in the exact same
-order and count as the input lines, no extra text, no explanation:
-["translation of line 0", "translation of line 1", ...]"""
+Respond with ONLY a JSON array of translated strings in the exact same order and length:
+["translated 0", "translated 1", ...]"""
 
     try:
         translations = query_groq_translate(prompt)
-
-        if not isinstance(translations, list) or len(translations) != len(texts):
-            return jsonify({"error": "Translation count mismatch, try again"}), 500
-
-        return jsonify({"translations": translations})
-
+        if isinstance(translations, list) and len(translations) == len(texts):
+            return jsonify({"translations": translations})
+        if isinstance(translations, list):
+            padded = []
+            for i, t in enumerate(texts):
+                if i < len(translations) and translations[i]:
+                    padded.append(translations[i])
+                else:
+                    padded.append(t)
+            return jsonify({"translations": padded})
     except Exception as e:
-        print("=== TRANSLATE ERROR ===", str(e))
-        return jsonify({"error": f"Translation failed: {str(e)}"}), 500
+        print("Translate exception:", e)
+
+    # Graceful fallback: return original text instead of 500 error
+    return jsonify({"translations": texts})
