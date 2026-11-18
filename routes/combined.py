@@ -1,20 +1,28 @@
 import os
+import re
 import json
 import requests
 from flask import Blueprint, request, jsonify
+from dotenv import load_dotenv
 from groq import Groq
 
+load_dotenv()
+
 combined_bp = Blueprint('combined', __name__)
-client = Groq(api_key=os.getenv('GROQ_API_KEY'))
+groq_key = os.getenv('GROQ_API_KEY', '').strip()
+client = Groq(api_key=groq_key) if groq_key else None
 
 GROQ_MODELS = [
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
     "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "mixtral-8x7b-32768",
-    "gemma2-9b-it"
+    "llama-3.1-8b-instant"
 ]
 
 def query_groq_fallback(prompt, max_tokens=1000):
+    if not client:
+        return None
     for model_name in GROQ_MODELS:
         try:
             response = client.chat.completions.create(
@@ -24,10 +32,15 @@ def query_groq_fallback(prompt, max_tokens=1000):
                 max_tokens=max_tokens
             )
             raw = response.choices[0].message.content.strip()
+            raw = re.sub(r'<think>[\s\S]*?</think>', '', raw).strip()
             if '```json' in raw:
                 raw = raw.split('```json')[1].split('```')[0].strip()
             elif '```' in raw:
                 raw = raw.split('```')[1].split('```')[0].strip()
+            start = raw.find('{')
+            end = raw.rfind('}')
+            if start != -1 and end != -1:
+                return json.loads(raw[start:end+1])
             return json.loads(raw)
         except Exception:
             continue

@@ -1,22 +1,31 @@
 import os
+import re
 import json
 import requests
 from flask import Blueprint, request, jsonify
+from dotenv import load_dotenv
 from groq import Groq
 
-phishing_bp = Blueprint('phishing', __name__)
-client = Groq(api_key=os.getenv('GROQ_API_KEY'))
+load_dotenv()
 
-# Fallback models in priority order
+phishing_bp = Blueprint('phishing', __name__)
+groq_key = os.getenv('GROQ_API_KEY', '').strip()
+client = Groq(api_key=groq_key) if groq_key else None
+
+# Active models on Groq
 GROQ_MODELS = [
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
     "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "mixtral-8x7b-32768",
-    "gemma2-9b-it"
+    "llama-3.1-8b-instant"
 ]
 
 def query_groq_with_fallback(prompt, max_tokens=1200):
     """Query Groq API trying primary model first, then fallbacks on 429 rate limits or errors."""
+    if not client:
+        raise Exception("Groq API client is not configured")
+
     last_error = None
     for model_name in GROQ_MODELS:
         try:
@@ -28,10 +37,15 @@ def query_groq_with_fallback(prompt, max_tokens=1200):
                 max_tokens=max_tokens
             )
             raw = response.choices[0].message.content.strip()
+            raw = re.sub(r'<think>[\s\S]*?</think>', '', raw).strip()
             if '```json' in raw:
                 raw = raw.split('```json')[1].split('```')[0].strip()
             elif '```' in raw:
                 raw = raw.split('```')[1].split('```')[0].strip()
+            start = raw.find('{')
+            end = raw.rfind('}')
+            if start != -1 and end != -1:
+                return json.loads(raw[start:end+1])
             return json.loads(raw)
         except Exception as e:
             last_error = str(e)
@@ -44,7 +58,7 @@ def query_groq_with_fallback(prompt, max_tokens=1200):
 def analyze_phishing():
     data = request.get_json(silent=True) or {}
     email_text = data.get('email_text', '')
-    response_language = data.get('response_language')  # user's selected site language, optional
+    response_language = data.get('response_language')
 
     if not email_text or len(email_text.strip()) < 10:
         return jsonify({"error": "Email text too short. Minimum 10 characters required."}), 400
@@ -61,11 +75,10 @@ original language) and the JSON keys stay in English."""
         language_rule = """IMPORTANT LANGUAGE RULE:
 First detect the language the email is written in (English, Hindi, Telugu, Tamil,
 Kannada, Malayalam, Bengali, Marathi, Gujarati, Punjabi, Odia, Urdu, Assamese,
-Sanskrit, or any other Indian or world language such as Spanish, French, Arabic,
-Chinese, Japanese, German, Russian, Portuguese, Korean, Italian, Turkish, etc).
+Sanskrit, or any other Indian or world language).
 Then write "explanation", "dangerous_sentences", and "manipulation_tactics"
-IN THAT SAME DETECTED LANGUAGE — not in English — using that language's native
-script. Only "language_detected" and the JSON keys themselves stay in English.
+IN THAT SAME DETECTED LANGUAGE — using that language's native script.
+Only "language_detected" and the JSON keys stay in English.
 If the email is in English, respond in English as normal."""
 
     prompt = f"""You are an expert cybersecurity analyst specializing in phishing detection.
@@ -81,9 +94,9 @@ Respond with ONLY this JSON structure, no extra text:
   "is_phishing": true or false,
   "threat_score": number between 0 and 100,
   "dangerous_sentences": ["exact sentence from email that is dangerous, written per the language rule above"],
-  "manipulation_tactics": ["tactic name, written per the language rule above, e.g. Urgency/तात्कालिकता/అత్యవసరత"],
+  "manipulation_tactics": ["tactic name, written per the language rule above, e.g. Urgency/తాత్कालिकత/అత్యవసరత"],
   "explanation": "2-3 sentence explanation, written per the language rule above, of why this is or isnt phishing",
-  "language_detected": "the exact language name in English that the ORIGINAL email was written in, e.g. Telugu"
+  "language_detected": "the exact language name in English that the ORIGINAL email was written in, e.g. English"
 }}"""
 
     try:
@@ -119,4 +132,4 @@ Respond with ONLY this JSON structure, no extra text:
     raw_threat = result.get('threat_score', 0)
     result['combined_threat_score'] = min(100, int(raw_threat * 0.7 + ai_score * 0.3))
 
-    return jsonify(result)
+    return jsonify(result)
